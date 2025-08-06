@@ -358,7 +358,7 @@ void HPF() {
 }
 void SJF() {
     while (finished_processes < process_count) {
-        // First, receive any new processes
+        // Receive any new processes
         PCB* current_p = Receive_process();
         while (current_p) {
             enqueue_SJF(Ready_Queue, current_p); 
@@ -372,65 +372,134 @@ void SJF() {
         if (running_process != NULL) {
             int current_time = getClk();
             int elapsed_time = current_time - running_process->last_run;
-            running_process->remaining_time -= elapsed_time;
-            running_process->last_run = current_time;
-        }
-
-        // Check for preemption: if there's a process in ready queue with shorter remaining time
-        if (running_process != NULL && !isEmptyQ(Ready_Queue)) {
-            PCB* shortest_process = front(Ready_Queue);
-            
-            // Preempt if the shortest process in queue has less remaining time than current process
-            if (shortest_process->remaining_time < running_process->remaining_time) {
-                // Stop the current running process
-                kill(running_process->pid, SIGSTOP);
-                running_process->state = BLOCKED;
+            if (elapsed_time > 0) {
+                running_process->remaining_time -= elapsed_time;
+                running_process->last_run = current_time;
                 
-                // Log the process stop
-                Log_Process_Event(running_process, "stopped");
-
-                // Put the preempted process back in ready queue
-                enqueue_SJF(Ready_Queue, running_process);
-                running_process = NULL;
+                // Ensure remaining time doesn't go negative
+                if (running_process->remaining_time < 0) {
+                    running_process->remaining_time = 0;
+                }
             }
         }
 
-        // Start/resume a process if none is currently running
-        if (running_process == NULL && !isEmptyQ(Ready_Queue)) {
-            running_process = dequeue(Ready_Queue);
+        // Check for preemption only if we have processes that have arrived
+        if (running_process != NULL && !isEmptyQ(Ready_Queue)) {
+            // Find the process with shortest remaining time that has actually arrived
+            PCB* shortest_arrived_process = NULL;
+            int current_time = getClk();
             
-            if (running_process->state == READY) {
-                // Start the process for the first time
-                int pid = fork();
-                if (pid == 0) {
-                    // Child process
-                    char remaining_time_str[10];
-                    sprintf(remaining_time_str, "%d", running_process->remaining_time);
-                    execl("./process", "process", remaining_time_str, NULL);
-                    perror("Error executing process");
-                    exit(-1);
-                } else if (pid < 0) {
-                    perror("Error in fork");
-                } else {
-                    // Parent process
-                    running_process->pid = pid;
-                    running_process->state = RUNNING;
-                    if (running_process->start_time == -1) {
-                        running_process->start_time = getClk();
+            // Look through ready queue for shortest job that has arrived
+            Queue* temp_queue = createQueue(100);
+            while (!isEmptyQ(Ready_Queue)) {
+                PCB* temp_process = dequeue(Ready_Queue);
+                if (temp_process->arrival_time <= current_time) {
+                    if (shortest_arrived_process == NULL || 
+                        temp_process->remaining_time < shortest_arrived_process->remaining_time) {
+                        // Put back the previous shortest if exists
+                        if (shortest_arrived_process != NULL) {
+                            enqueue_SJF(temp_queue, shortest_arrived_process);
+                        }
+                        shortest_arrived_process = temp_process;
+                    } else {
+                        enqueue_SJF(temp_queue, temp_process);
                     }
-                    running_process->last_run = getClk();
-
-                    // Log the process start
-                    Log_Process_Event(running_process, "started");
+                } else {
+                    enqueue_SJF(temp_queue, temp_process);
                 }
-            } else if (running_process->state == BLOCKED) {
-                // Resume a previously preempted process
-                kill(running_process->pid, SIGCONT);
-                running_process->state = RUNNING;
-                running_process->last_run = getClk();
+            }
+            
+            // Restore the queue
+            while (!isEmptyQ(temp_queue)) {
+                PCB* temp_process = dequeue(temp_queue);
+                enqueue_SJF(Ready_Queue, temp_process);
+            }
+            destroyQueue(temp_queue);
+            
+            // If we found a shorter job that has arrived, preempt
+            if (shortest_arrived_process != NULL && 
+                shortest_arrived_process->remaining_time < running_process->remaining_time &&
+                running_process->remaining_time > 0) {
+                
+                // Preempt current process
+                kill(running_process->pid, SIGSTOP);
+                running_process->state = BLOCKED;
+                
+                Log_Process_Event(running_process, "stopped");
+                
+                // Put current process back in queue
+                enqueue_SJF(Ready_Queue, running_process);
+                running_process = NULL;
+            } else if (shortest_arrived_process != NULL) {
+                // Put the process back since we're not preempting
+                enqueue_SJF(Ready_Queue, shortest_arrived_process);
+            }
+        }
 
-                // Log the process resume
-                Log_Process_Event(running_process, "resumed");
+        // Start a new process if none is running
+        if (running_process == NULL && !isEmptyQ(Ready_Queue)) {
+            int current_time = getClk();
+            
+            // Find the shortest job that has actually arrived
+            PCB* next_process = NULL;
+            Queue* temp_queue = createQueue(100);
+            
+            while (!isEmptyQ(Ready_Queue)) {
+                PCB* temp_process = dequeue(Ready_Queue);
+                if (temp_process->arrival_time <= current_time) {
+                    if (next_process == NULL || 
+                        temp_process->remaining_time < next_process->remaining_time) {
+                        if (next_process != NULL) {
+                            enqueue_SJF(temp_queue, next_process);
+                        }
+                        next_process = temp_process;
+                    } else {
+                        enqueue_SJF(temp_queue, temp_process);
+                    }
+                } else {
+                    enqueue_SJF(temp_queue, temp_process);
+                }
+            }
+            
+            // Restore remaining processes to queue
+            while (!isEmptyQ(temp_queue)) {
+                PCB* temp_process = dequeue(temp_queue);
+                enqueue_SJF(Ready_Queue, temp_process);
+            }
+            destroyQueue(temp_queue);
+            
+            if (next_process != NULL) {
+                running_process = next_process;
+                
+                if (running_process->state == READY) {
+                    // Start new process
+                    int pid = fork();
+                    if (pid == 0) {
+                        char remaining_time_str[10];
+                        sprintf(remaining_time_str, "%d", running_process->remaining_time);
+                        execl("./process", "process", remaining_time_str, NULL);
+                        perror("Error executing process");
+                        exit(-1);
+                    } else if (pid < 0) {
+                        perror("Error in fork");
+                    } else {
+                        running_process->pid = pid;
+                        running_process->state = RUNNING;
+                        if (running_process->start_time == -1) {
+                            running_process->start_time = getClk();
+                        }
+                        running_process->last_run = getClk();
+                        
+                        Log_Process_Event(running_process, "started");
+                    }
+                } else if (running_process->state == BLOCKED) {
+                    // Resume preempted process
+                    kill(running_process->pid, SIGCONT);
+                    running_process->state = RUNNING;
+                    running_process->last_run = getClk();
+                    
+                    Log_Process_Event(running_process, "resumed");
+                }
             }
         }
     }
