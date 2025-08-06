@@ -383,42 +383,14 @@ void SJF() {
             }
         }
 
-        // Check for preemption only if we have processes that have arrived
+        // Check for preemption - simple approach
         if (running_process != NULL && !isEmptyQ(Ready_Queue)) {
-            // Find the process with shortest remaining time that has actually arrived
-            PCB* shortest_arrived_process = NULL;
+            PCB* shortest_process = front(Ready_Queue);
             int current_time = getClk();
             
-            // Look through ready queue for shortest job that has arrived
-            Queue* temp_queue = createQueue(100);
-            while (!isEmptyQ(Ready_Queue)) {
-                PCB* temp_process = dequeue(Ready_Queue);
-                if (temp_process->arrival_time <= current_time) {
-                    if (shortest_arrived_process == NULL || 
-                        temp_process->remaining_time < shortest_arrived_process->remaining_time) {
-                        // Put back the previous shortest if exists
-                        if (shortest_arrived_process != NULL) {
-                            enqueue_SJF(temp_queue, shortest_arrived_process);
-                        }
-                        shortest_arrived_process = temp_process;
-                    } else {
-                        enqueue_SJF(temp_queue, temp_process);
-                    }
-                } else {
-                    enqueue_SJF(temp_queue, temp_process);
-                }
-            }
-            
-            // Restore the queue
-            while (!isEmptyQ(temp_queue)) {
-                PCB* temp_process = dequeue(temp_queue);
-                enqueue_SJF(Ready_Queue, temp_process);
-            }
-            destroyQueue(temp_queue);
-            
-            // If we found a shorter job that has arrived, preempt
-            if (shortest_arrived_process != NULL && 
-                shortest_arrived_process->remaining_time < running_process->remaining_time &&
+            // Only preempt if the shortest process has arrived and has less remaining time
+            if (shortest_process->arrival_time <= current_time && 
+                shortest_process->remaining_time < running_process->remaining_time &&
                 running_process->remaining_time > 0) {
                 
                 // Preempt current process
@@ -430,9 +402,6 @@ void SJF() {
                 // Put current process back in queue
                 enqueue_SJF(Ready_Queue, running_process);
                 running_process = NULL;
-            } else if (shortest_arrived_process != NULL) {
-                // Put the process back since we're not preempting
-                enqueue_SJF(Ready_Queue, shortest_arrived_process);
             }
         }
 
@@ -440,36 +409,10 @@ void SJF() {
         if (running_process == NULL && !isEmptyQ(Ready_Queue)) {
             int current_time = getClk();
             
-            // Find the shortest job that has actually arrived
-            PCB* next_process = NULL;
-            Queue* temp_queue = createQueue(100);
-            
-            while (!isEmptyQ(Ready_Queue)) {
-                PCB* temp_process = dequeue(Ready_Queue);
-                if (temp_process->arrival_time <= current_time) {
-                    if (next_process == NULL || 
-                        temp_process->remaining_time < next_process->remaining_time) {
-                        if (next_process != NULL) {
-                            enqueue_SJF(temp_queue, next_process);
-                        }
-                        next_process = temp_process;
-                    } else {
-                        enqueue_SJF(temp_queue, temp_process);
-                    }
-                } else {
-                    enqueue_SJF(temp_queue, temp_process);
-                }
-            }
-            
-            // Restore remaining processes to queue
-            while (!isEmptyQ(temp_queue)) {
-                PCB* temp_process = dequeue(temp_queue);
-                enqueue_SJF(Ready_Queue, temp_process);
-            }
-            destroyQueue(temp_queue);
-            
-            if (next_process != NULL) {
-                running_process = next_process;
+            // Check if the front process has arrived
+            PCB* next_process = front(Ready_Queue);
+            if (next_process != NULL && next_process->arrival_time <= current_time) {
+                running_process = dequeue(Ready_Queue);
                 
                 if (running_process->state == READY) {
                     // Start new process
