@@ -356,42 +356,46 @@ void HPF() {
         
     }
 }
-
 void SJF() {
     while (finished_processes < process_count) {
-        // Receive any new processes
+        // First, receive any new processes
         PCB* current_p = Receive_process();
         while (current_p) {
             enqueue_SJF(Ready_Queue, current_p); 
             current_p = Receive_process();
         }
 
-        // Check for any ended processes
+        // Check for any processes that have terminated
         Check_Process_Termination();
 
-        // Check for preemption - if a new process has shorter remaining time
+        // Update remaining time of currently running process
+        if (running_process != NULL) {
+            int current_time = getClk();
+            int elapsed_time = current_time - running_process->last_run;
+            running_process->remaining_time -= elapsed_time;
+            running_process->last_run = current_time;
+        }
+
+        // Check for preemption: if there's a process in ready queue with shorter remaining time
         if (running_process != NULL && !isEmptyQ(Ready_Queue)) {
             PCB* shortest_process = front(Ready_Queue);
+            
+            // Preempt if the shortest process in queue has less remaining time than current process
             if (shortest_process->remaining_time < running_process->remaining_time) {
-                // Preempt the current running process
+                // Stop the current running process
                 kill(running_process->pid, SIGSTOP);
-
-                // Update running process's remaining time
-                int current_time = getClk();
-                int elapsed_time = current_time - running_process->last_run;
-                running_process->remaining_time -= elapsed_time;
                 running_process->state = BLOCKED;
-
+                
                 // Log the process stop
                 Log_Process_Event(running_process, "stopped");
 
-                // Re-enqueue the preempted process
+                // Put the preempted process back in ready queue
                 enqueue_SJF(Ready_Queue, running_process);
                 running_process = NULL;
             }
         }
 
-        // Start a new process if none is running
+        // Start/resume a process if none is currently running
         if (running_process == NULL && !isEmptyQ(Ready_Queue)) {
             running_process = dequeue(Ready_Queue);
             
@@ -411,7 +415,9 @@ void SJF() {
                     // Parent process
                     running_process->pid = pid;
                     running_process->state = RUNNING;
-                    running_process->start_time = getClk();
+                    if (running_process->start_time == -1) {
+                        running_process->start_time = getClk();
+                    }
                     running_process->last_run = getClk();
 
                     // Log the process start
@@ -429,7 +435,6 @@ void SJF() {
         }
     }
 }
-
 void RR(int quantum) {
     while (finished_processes < process_count) {
         // if(running_process){
