@@ -359,11 +359,6 @@ void HPF() {
 
 void SJF() {
     while (finished_processes < process_count) {
-        // if(running_process){
-        //     running_process->remaining_time  = running_process->runtime - (getClk()-running_process->start_time+1);
-        // }
-
-
         // Receive any new processes
         PCB* current_p = Receive_process();
         while (current_p) {
@@ -374,35 +369,64 @@ void SJF() {
         // Check for any ended processes
         Check_Process_Termination();
 
-        // Start a new process 
-        if (running_process == NULL && !isEmptyQ(Ready_Queue)) {
-            running_process = dequeue(Ready_Queue);
-            int pid = fork();
-            if (pid == 0) {
-                // Child process
-                char remaining_time_str[10];
-                sprintf(remaining_time_str, "%d", running_process->remaining_time);
-                execl("./process", "process", remaining_time_str, NULL);
-                perror("Error executing process");
-                exit(-1);
-            } else if (pid < 0) {
-                perror("Error in fork");
-            } else {
-              
-                running_process->pid = pid;
-                running_process->state = RUNNING;
-                running_process->start_time = getClk();
-                running_process->last_run = getClk();
-                
+        // Check for preemption - if a new process has shorter remaining time
+        if (running_process != NULL && !isEmptyQ(Ready_Queue)) {
+            PCB* shortest_process = front(Ready_Queue);
+            if (shortest_process->remaining_time < running_process->remaining_time) {
+                // Preempt the current running process
+                kill(running_process->pid, SIGSTOP);
 
-              
-                Log_Process_Event(running_process, "started");
+                // Update running process's remaining time
+                int current_time = getClk();
+                int elapsed_time = current_time - running_process->last_run;
+                running_process->remaining_time -= elapsed_time;
+                running_process->state = BLOCKED;
+
+                // Log the process stop
+                Log_Process_Event(running_process, "stopped");
+
+                // Re-enqueue the preempted process
+                enqueue_SJF(Ready_Queue, running_process);
+                running_process = NULL;
             }
         }
-       
 
-      
-        // sleep(1);
+        // Start a new process if none is running
+        if (running_process == NULL && !isEmptyQ(Ready_Queue)) {
+            running_process = dequeue(Ready_Queue);
+            
+            if (running_process->state == READY) {
+                // Start the process for the first time
+                int pid = fork();
+                if (pid == 0) {
+                    // Child process
+                    char remaining_time_str[10];
+                    sprintf(remaining_time_str, "%d", running_process->remaining_time);
+                    execl("./process", "process", remaining_time_str, NULL);
+                    perror("Error executing process");
+                    exit(-1);
+                } else if (pid < 0) {
+                    perror("Error in fork");
+                } else {
+                    // Parent process
+                    running_process->pid = pid;
+                    running_process->state = RUNNING;
+                    running_process->start_time = getClk();
+                    running_process->last_run = getClk();
+
+                    // Log the process start
+                    Log_Process_Event(running_process, "started");
+                }
+            } else if (running_process->state == BLOCKED) {
+                // Resume a previously preempted process
+                kill(running_process->pid, SIGCONT);
+                running_process->state = RUNNING;
+                running_process->last_run = getClk();
+
+                // Log the process resume
+                Log_Process_Event(running_process, "resumed");
+            }
+        }
     }
 }
 
