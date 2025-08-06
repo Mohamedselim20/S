@@ -50,8 +50,8 @@ int main(int argc, char* argv[]) {
     // Ask the user for the chosen scheduling algorithm
     int algorithm;
     printf("Choose a scheduling algorithm:\n");
-    printf("1. Preemptive Highest Priority First (PHPF).\n");
-    printf("2. Shortest Remaining Time Next (SRTN).\n");
+    printf("1. Highest Priority First (PHPF).\n");
+    printf("2. Shortest Job Next (SJF).\n");
     printf("3. Round Robin (RR).\n");
     scanf("%d", &algorithm);
 
