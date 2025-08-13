@@ -22,8 +22,9 @@ int main(int argc, char *argv[]) {
 
     srand(time(null));
 
-    // Updated header for 5 columns
-    fprintf(pFile, "#id\tarrival\truntime\tpriority\tmemsize\n");
+    // Aligned header
+    fprintf(pFile, "%-5s %-8s %-8s %-8s %-8s\n",
+            "id", "arrival", "runtime", "priority", "memsize");
 
     pData.arrivaltime = 1;
     for (int i = 1; i <= no; i++) {
@@ -33,7 +34,7 @@ int main(int argc, char *argv[]) {
         pData.priority = rand() % 11;
         pData.memsize = (rand() % 256) + 1; // between 1 and 256 bytes
 
-        fprintf(pFile, "%d\t%d\t%d\t%d\t%d\n",
+        fprintf(pFile, "%-5d %-8d %-8d %-8d %-8d\n",
                 pData.id,
                 pData.arrivaltime,
                 pData.runningtime,
