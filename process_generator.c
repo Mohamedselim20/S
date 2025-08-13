@@ -24,7 +24,7 @@ int main(int argc, char* argv[]) {
 
     int Proc_num = 0;
     char buffer[200];
-    fgets(buffer, sizeof(buffer), file); // Skip the first line
+    fgets(buffer, sizeof(buffer), file); // Skip the header line
 
     while (fgets(buffer, sizeof(buffer), file)) {
         Proc_num++;
@@ -38,21 +38,31 @@ int main(int argc, char* argv[]) {
         exit(-1);
     }
 
-    fgets(buffer, sizeof(buffer), file); // Skip the first line again
+    fgets(buffer, sizeof(buffer), file); // Skip the header again
     int count = 0;
 
-    // Now read memsize as well
-    while (fscanf(file, "%d\t%d\t%d\t%d\t%d",
-                  &procs[count].id,
-                  &procs[count].arrivaltime,
-                  &procs[count].runningtime,
-                  &procs[count].priority,
-                  &procs[count].memsize) == 5) {
+    /* Try reading memsize if present (Phase 2), else fallback (Phase 1) */
+    while (1) {
+        int valuesRead = fscanf(file, "%d\t%d\t%d\t%d\t%d",
+                                &procs[count].id,
+                                &procs[count].arrivaltime,
+                                &procs[count].runningtime,
+                                &procs[count].priority,
+                                &procs[count].memsize);
+
+        if (valuesRead == EOF || valuesRead == 0) {
+            break; // End of file or read error
+        }
+        if (valuesRead == 4) {
+            // Phase 1 case: no memsize in file
+            procs[count].memsize = 0;
+        }
         count++;
+        if (count >= Proc_num) break;
     }
     fclose(file);
 
-    // Ask the user for the chosen scheduling algorithm
+    // Ask user for scheduling algorithm
     int algorithm;
     printf("Choose a scheduling algorithm:\n");
     printf("1. Highest Priority First (HPF).\n");
@@ -66,7 +76,7 @@ int main(int argc, char* argv[]) {
         scanf("%d", &timeSlot);
     }
 
-    // Start the clock process
+    // Start clock process
     int pid_c = fork();
     if (pid_c == -1) {
         perror("Error in creating clock process");
@@ -79,12 +89,11 @@ int main(int argc, char* argv[]) {
     // Initialize clock
     initClk();
 
-    // Start the scheduler process
+    // Start scheduler process
     int pid_s = fork();
     if (pid_s == -1) {
         perror("Error in creating scheduler process");
     } else if (pid_s == 0) {
-        // Child process - Scheduler
         char algo_str[10], proc_str[10], time_str[10];
         snprintf(algo_str, sizeof(algo_str), "%d", algorithm);
         snprintf(proc_str, sizeof(proc_str), "%d", Proc_num);
@@ -99,15 +108,14 @@ int main(int argc, char* argv[]) {
         exit(-1);
     }
 
-    // Parent process continues
-
-    // Send processes to the scheduler at the appropriate time
+    // Send processes to scheduler
     int snd_num = 0;
     while (snd_num < Proc_num) {
         int current_time = getClk();
         if (procs[snd_num].arrivaltime <= current_time) {
-            printf("Sending process ID %d at time %d\n", procs[snd_num].id, current_time);
-            
+            printf("Sending process ID %d (memsize=%d) at time %d\n",
+                   procs[snd_num].id, procs[snd_num].memsize, current_time);
+
             process_msgbuff msg;
             msg.mtype = 1;
             msg.process = procs[snd_num];
@@ -121,10 +129,10 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Wait for the scheduler to finish
+    // Wait for scheduler to finish
     waitpid(pid_s, NULL, 0);
 
-    // Clean up resources
+    // Cleanup
     msgctl(msq_id, IPC_RMID, NULL);
     destroyClk(false);
     free(procs);
