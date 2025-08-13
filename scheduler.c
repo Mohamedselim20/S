@@ -65,18 +65,15 @@ static int next_power_of_two(int x) {
 
 /* Map a block size to index (0 for 1024, 1 for 512, ... 10 for 1) */
 static int size_to_index(int size) {
-    /* Clamp by bounds */
     if (size >= TOTAL_MEMORY_BYTES) return 0;
     if (size <= 1) return MAX_ORDER;
-
-    /* size is a power of two here ideally */
     int s = TOTAL_MEMORY_BYTES;
     int idx = 0;
     while (s > size) {
         s >>= 1;
         idx++;
     }
-    return idx; /* exact if size is power-of-two */
+    return idx;
 }
 
 /* Map index to block size */
@@ -115,7 +112,6 @@ static void buddy_init() {
 
 /* Allocate: returns start address or -1 if impossible */
 static int buddy_allocate_bytes(int requested_bytes) {
-    /* Enforce minimum block size and round up to next power-of-two */
     if (requested_bytes < MIN_BLOCK_BYTES) requested_bytes = MIN_BLOCK_BYTES;
     int need = next_power_of_two(requested_bytes);
     if (need > TOTAL_MEMORY_BYTES) return -1;
@@ -125,16 +121,14 @@ static int buddy_allocate_bytes(int requested_bytes) {
     /* Find first non-empty free list at or above */
     int idx = target_idx;
     while (idx >= 0 && !free_list[idx]) idx--;
-    if (idx < 0) return -1; /* no memory */
+    if (idx < 0) return -1;
 
     /* Split until reaching target_idx */
     while (idx < target_idx) {
-        /* Take a larger block */
         Block* big = freelist_pop(idx);
-        if (!big) return -1; /* should not happen because we found non-empty above */
+        if (!big) return -1; /* should not happen */
         int half = big->size / 2;
 
-        /* Create two buddies */
         Block* left = (Block*)malloc(sizeof(Block));
         left->start = big->start;
         left->size  = half;
@@ -149,18 +143,15 @@ static int buddy_allocate_bytes(int requested_bytes) {
 
         free(big);
 
-        /* Push the two halves into the next list down (idx+1) */
         freelist_insert(right);
         freelist_insert(left);
 
-        idx++; /* we moved down a level (smaller blocks) */
+        idx++; /* move down */
     }
 
-    /* Now pop from the target idx */
     Block* alloc = freelist_pop(target_idx);
-    if (!alloc) return -1; /* unexpected */
+    if (!alloc) return -1;
     int start_addr = alloc->start;
-    /* We don’t keep an allocated list; we give back the address & size via PCB. */
     free(alloc);
     return start_addr;
 }
@@ -168,8 +159,7 @@ static int buddy_allocate_bytes(int requested_bytes) {
 /* Free a block and coalesce with its buddy while possible */
 static void buddy_free_bytes(int start, int size_pow2) {
     if (size_pow2 < MIN_BLOCK_BYTES) size_pow2 = MIN_BLOCK_BYTES;
-    int size = next_power_of_two(size_pow2); /* ensure pow2 */
-
+    int size = next_power_of_two(size_pow2);
     int idx = size_to_index(size);
 
     /* Insert the freed block */
@@ -197,13 +187,13 @@ static void buddy_free_bytes(int start, int size_pow2) {
             prev = &cur->next;
             cur = cur->next;
         }
-        if (!buddy) break; /* cannot merge */
+        if (!buddy) break;
 
-        /* Remove buddy from free list */
+        /* Remove buddy */
         *prev = buddy->next;
         free(buddy);
 
-        /* Remove our block from free list, reinsert merged into upper list */
+        /* Remove our block from free list */
         prev = &free_list[idx]; cur = free_list[idx];
         while (cur) {
             if (cur->start == start && cur->size == block_size && cur->free) {
@@ -229,7 +219,7 @@ static void buddy_free_bytes(int start, int size_pow2) {
     }
 }
 
-/* Log a memory event */
+/* Log a memory event (safe to call only when memlog != NULL) */
 static void log_memory_event(int time, int pid, const char* action, int start, int size) {
     int end = start + size - 1;
     fprintf(memlog, "At time %d %s %d bytes for process %d from %d to %d\n",
@@ -256,13 +246,26 @@ static void try_allocate_pending() {
     PendingNode *prev = NULL, *cur = pending_head;
     while (cur) {
         PCB* p = cur->p;
+
+        /* Safety: Phase 1 jobs (memsize<=0) should never be in pending, but skip if they are */
+        if (p->memsize <= 0) {
+            if (!prev) pending_head = cur->next;
+            else prev->next = cur->next;
+            PendingNode* to_free = cur;
+            cur = cur->next;
+            free(to_free);
+
+            if (g_algorithm == 1) enqueue(Ready_Queue, p);
+            else if (g_algorithm == 2) enqueue_SJF(Ready_Queue, p);
+            else enqueue_RR(Ready_Queue, p);
+            continue;
+        }
+
         int addr = buddy_allocate_bytes(p->memsize);
         if (addr != -1) {
-            /* Allocate success: fill PCB, log, enqueue according to algorithm */
             p->mem_start = addr;
             log_memory_event(getClk(), p->id, "allocated", addr, p->memsize);
 
-            /* Remove node from pending list */
             if (!prev) {
                 pending_head = cur->next;
             } else {
@@ -272,16 +275,10 @@ static void try_allocate_pending() {
             cur = cur->next;
             free(to_free);
 
-            /* Enqueue based on chosen algorithm */
-            if (g_algorithm == 1) {
-                enqueue(Ready_Queue, p);
-            } else if (g_algorithm == 2) {
-                enqueue_SJF(Ready_Queue, p);
-            } else {
-                enqueue_RR(Ready_Queue, p);
-            }
+            if (g_algorithm == 1) enqueue(Ready_Queue, p);
+            else if (g_algorithm == 2) enqueue_SJF(Ready_Queue, p);
+            else enqueue_RR(Ready_Queue, p);
         } else {
-            /* Still cannot allocate, move on */
             prev = cur;
             cur = cur->next;
         }
@@ -331,10 +328,12 @@ void Check_Process_Termination() {
             /* Log process finish to scheduler.log */
             Log_Process_Event(running_process, "finished");
 
-            /* Free memory and log */
-            buddy_free_bytes(running_process->mem_start, running_process->memsize);
-            log_memory_event(getClk(), running_process->id, "freed",
-                             running_process->mem_start, running_process->memsize);
+            /* Free memory and log (Phase 2 only) */
+            if (running_process->memsize > 0 && running_process->mem_start >= 0 && memlog) {
+                buddy_free_bytes(running_process->mem_start, running_process->memsize);
+                log_memory_event(getClk(), running_process->id, "freed",
+                                 running_process->mem_start, running_process->memsize);
+            }
 
             /* Metrics */
             int TA = getClk() - running_process->arrival_time;
@@ -350,8 +349,6 @@ void Check_Process_Termination() {
 
             /* After freeing memory, try to admit pending processes */
             try_allocate_pending();
-        } else {
-            /* Unknown PID; ignore safely */
         }
     }
 }
@@ -378,18 +375,25 @@ PCB* Receive_process() {
         rec_process->start_time = -1;
         rec_process->last_run = -1;
         rec_process->memsize = message.process.memsize; /* requires updated headers.h */
+        rec_process->mem_start = -1;
 
         total_runtime += message.process.runningtime;
 
-        /* Allocate memory immediately (constant over lifetime). If not available, push to pending. */
+        /* Phase 1 compatibility: if memsize <= 0, skip allocation entirely */
+        if (rec_process->memsize <= 0) {
+            return rec_process; /* No memory tracking/logging in this case */
+        }
+
+        /* Phase 2: Allocate memory now (constant over lifetime). If not available, push to pending. */
         int addr = buddy_allocate_bytes(rec_process->memsize);
         if (addr == -1) {
-            /* Not enough memory now — defer */
             pending_push(rec_process);
             return NULL; /* caller will not enqueue; we'll try later */
         }
         rec_process->mem_start = addr;
-        log_memory_event(getClk(), rec_process->id, "allocated", addr, rec_process->memsize);
+        if (memlog) {
+            log_memory_event(getClk(), rec_process->id, "allocated", addr, rec_process->memsize);
+        }
 
         return rec_process;
     } else {
@@ -412,6 +416,8 @@ void ComputePerformanceMetrics() {
     }
 
     int total_time = getClk() - first_arr_proc;
+    if (total_time <= 0) total_time = 1; /* avoid div-by-zero in weird cases */
+
     float cpu_utilization = ((float)total_runtime / (float)total_time) * 100.0f;
     cpu_utilization = Round(cpu_utilization);
 
@@ -473,6 +479,7 @@ int main(int argc, char* argv[]) {
     }
     fprintf(logfile, "#At time x process y state arr w total z remain y wait k\n");
 
+    /* Memory log: open always, but we will only write if memsize>0 */
     memlog = fopen("memory.log", "w");
     if (!memlog) {
         perror("Error opening memory log file");
@@ -481,7 +488,7 @@ int main(int argc, char* argv[]) {
     fprintf(memlog, "#At time x allocated y bytes for process z from i to j\n");
     fprintf(memlog, "#At time x freed y bytes for process z from i to j\n");
 
-    /* Init buddy allocator */
+    /* Init buddy allocator (safe even if no process uses it) */
     buddy_init();
 
     /* Run selected algorithm */
