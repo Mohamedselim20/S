@@ -1,18 +1,17 @@
-#include "headers.h"
+ن#include "headers.h"
 #include <signal.h>
 #include <math.h>
 
-/* ----------------------- Buddy Allocator Config ----------------------- */
+
 #define TOTAL_MEMORY_BYTES 1024   /* exactly as requested */
 #define MIN_BLOCK_BYTES    1
 
-/* Free lists indexed by block size:
-   idx 0 -> 1024, 1 -> 512, ..., 10 -> 1 byte (since 2^10 = 1024) */
-#define MAX_ORDER 10  /* log2(1024) = 10 */
+
+#define MAX_ORDER 10  
 
 typedef struct Block {
-    int start;              /* start address (byte offset) */
-    int size;               /* block size in bytes (power of two) */
+    int start;              
+    int size;               
     int free;
     struct Block* next;
 } Block;
@@ -20,7 +19,7 @@ typedef struct Block {
 static Block* free_list[MAX_ORDER + 1];
 static FILE* memlog = NULL;
 
-/* ----------------------- Pending (no-memory) list --------------------- */
+
 typedef struct PendingNode {
     PCB* p;
     struct PendingNode* next;
@@ -28,7 +27,7 @@ typedef struct PendingNode {
 
 static PendingNode* pending_head = NULL;
 
-/* ----------------------- Original Scheduler Globals ------------------- */
+ 
 int msgq_id;
 int received_processes = 0;
 int finished_processes = 0;
@@ -38,22 +37,20 @@ Queue* Ready_Queue;
 PCB* running_process = NULL;
 FILE* logfile;
 
-/* For metrics */
+
 float total_runtime = 0;
 float total_TA = 0;
 float total_WTA = 0;
 float total_waiting_time = 0;
 float* WTA_values;
 
-/* To know which enqueuing policy to use when a pending process gets memory */
-static int g_algorithm = 0;  /* 1=HPF, 2=SJF, 3=RR */
 
-/* ----------------------- Prototypes ----------------------------------- */
+static int g_algorithm = 0;  
+
 void HPF();
 void SJF();
 void RR(int quantum);
 
-/* ----------------------- Utility -------------------------------------- */
 static int is_power_of_two(int x) { return x && ((x & (x - 1)) == 0); }
 
 static int next_power_of_two(int x) {
@@ -63,7 +60,7 @@ static int next_power_of_two(int x) {
     return p;
 }
 
-/* Map a block size to index (0 for 1024, 1 for 512, ... 10 for 1) */
+
 static int size_to_index(int size) {
     if (size >= TOTAL_MEMORY_BYTES) return 0;
     if (size <= 1) return MAX_ORDER;
@@ -76,12 +73,12 @@ static int size_to_index(int size) {
     return idx;
 }
 
-/* Map index to block size */
+
 static int index_to_size(int idx) {
     return TOTAL_MEMORY_BYTES >> idx;
 }
 
-/* Insert a block into its free list (LIFO) */
+
 static void freelist_insert(Block* b) {
     int idx = size_to_index(b->size);
     b->free = 1;
@@ -89,7 +86,7 @@ static void freelist_insert(Block* b) {
     free_list[idx] = b;
 }
 
-/* Pop the head block from free list idx */
+
 static Block* freelist_pop(int idx) {
     Block* b = free_list[idx];
     if (!b) return NULL;
@@ -99,7 +96,7 @@ static Block* freelist_pop(int idx) {
     return b;
 }
 
-/* Initialize buddy allocator: one 1024-byte free block */
+
 static void buddy_init() {
     for (int i = 0; i <= MAX_ORDER; i++) free_list[i] = NULL;
     Block* initial = (Block*)malloc(sizeof(Block));
@@ -110,7 +107,6 @@ static void buddy_init() {
     freelist_insert(initial);
 }
 
-/* Allocate: returns start address or -1 if impossible */
 static int buddy_allocate_bytes(int requested_bytes) {
     if (requested_bytes < MIN_BLOCK_BYTES) requested_bytes = MIN_BLOCK_BYTES;
     int need = next_power_of_two(requested_bytes);
@@ -118,15 +114,15 @@ static int buddy_allocate_bytes(int requested_bytes) {
 
     int target_idx = size_to_index(need);
 
-    /* Find first non-empty free list at or above */
+   
     int idx = target_idx;
     while (idx >= 0 && !free_list[idx]) idx--;
     if (idx < 0) return -1;
 
-    /* Split until reaching target_idx */
+    
     while (idx < target_idx) {
         Block* big = freelist_pop(idx);
-        if (!big) return -1; /* should not happen */
+        if (!big) return -1; 
         int half = big->size / 2;
 
         Block* left = (Block*)malloc(sizeof(Block));
@@ -156,13 +152,13 @@ static int buddy_allocate_bytes(int requested_bytes) {
     return start_addr;
 }
 
-/* Free a block and coalesce with its buddy while possible */
+
 static void buddy_free_bytes(int start, int size_pow2) {
     if (size_pow2 < MIN_BLOCK_BYTES) size_pow2 = MIN_BLOCK_BYTES;
     int size = next_power_of_two(size_pow2);
     int idx = size_to_index(size);
 
-    /* Insert the freed block */
+    
     Block* blk = (Block*)malloc(sizeof(Block));
     blk->start = start;
     blk->size  = size;
@@ -170,14 +166,13 @@ static void buddy_free_bytes(int start, int size_pow2) {
     blk->next  = NULL;
     freelist_insert(blk);
 
-    /* Try coalescing upwards */
     while (idx > 0) {
         int block_size = index_to_size(idx);
         int buddy_addr = ( (start / block_size) % 2 == 0 )
                          ? start + block_size
                          : start - block_size;
 
-        /* Look for buddy in this free list */
+      
         Block **prev = &free_list[idx], *cur = free_list[idx], *buddy = NULL;
         while (cur) {
             if (cur->start == buddy_addr && cur->free && cur->size == block_size) {
@@ -189,11 +184,11 @@ static void buddy_free_bytes(int start, int size_pow2) {
         }
         if (!buddy) break;
 
-        /* Remove buddy */
+        
         *prev = buddy->next;
         free(buddy);
 
-        /* Remove our block from free list */
+        
         prev = &free_list[idx]; cur = free_list[idx];
         while (cur) {
             if (cur->start == start && cur->size == block_size && cur->free) {
@@ -205,10 +200,10 @@ static void buddy_free_bytes(int start, int size_pow2) {
             cur = cur->next;
         }
 
-        /* Merge */
+        
         start = (buddy_addr < start) ? buddy_addr : start;
         size  = block_size * 2;
-        idx--; /* move up */
+        idx--; 
 
         Block* merged = (Block*)malloc(sizeof(Block));
         merged->start = start;
@@ -219,7 +214,7 @@ static void buddy_free_bytes(int start, int size_pow2) {
     }
 }
 
-/* Log a memory event (safe to call only when memlog != NULL) */
+
 static void log_memory_event(int time, int pid, const char* action, int start, int size) {
     int end = start + size - 1;
     fprintf(memlog, "At time %d %s %d bytes for process %d from %d to %d\n",
@@ -227,7 +222,7 @@ static void log_memory_event(int time, int pid, const char* action, int start, i
     fflush(memlog);
 }
 
-/* ----------------------- Pending queue helpers ------------------------ */
+
 static void pending_push(PCB* p) {
     PendingNode* node = (PendingNode*)malloc(sizeof(PendingNode));
     node->p = p;
@@ -241,13 +236,13 @@ static void pending_push(PCB* p) {
     }
 }
 
-/* Try allocate for all pending processes; enqueue any that succeed */
+
 static void try_allocate_pending() {
     PendingNode *prev = NULL, *cur = pending_head;
     while (cur) {
         PCB* p = cur->p;
 
-        /* Safety: Phase 1 jobs (memsize<=0) should never be in pending, but skip if they are */
+         
         if (p->memsize <= 0) {
             if (!prev) pending_head = cur->next;
             else prev->next = cur->next;
@@ -325,17 +320,17 @@ void Check_Process_Termination() {
             running_process->state = FINISHED;
             running_process->remaining_time = 0;
 
-            /* Log process finish to scheduler.log */
+            
             Log_Process_Event(running_process, "finished");
 
-            /* Free memory and log (Phase 2 only) */
+            
             if (running_process->memsize > 0 && running_process->mem_start >= 0 && memlog) {
                 buddy_free_bytes(running_process->mem_start, running_process->memsize);
                 log_memory_event(getClk(), running_process->id, "freed",
                                  running_process->mem_start, running_process->memsize);
             }
 
-            /* Metrics */
+            
             int TA = getClk() - running_process->arrival_time;
             float WTA = (float)TA / running_process->runtime;
             total_TA += TA;
@@ -347,7 +342,7 @@ void Check_Process_Termination() {
             running_process = NULL;
             finished_processes++;
 
-            /* After freeing memory, try to admit pending processes */
+         
             try_allocate_pending();
         }
     }
@@ -379,16 +374,16 @@ PCB* Receive_process() {
 
         total_runtime += message.process.runningtime;
 
-        /* Phase 1 compatibility: if memsize <= 0, skip allocation entirely */
+        
         if (rec_process->memsize <= 0) {
-            return rec_process; /* No memory tracking/logging in this case */
+            return rec_process; 
         }
 
-        /* Phase 2: Allocate memory now (constant over lifetime). If not available, push to pending. */
+        
         int addr = buddy_allocate_bytes(rec_process->memsize);
         if (addr == -1) {
             pending_push(rec_process);
-            return NULL; /* caller will not enqueue; we'll try later */
+            return NULL;  
         }
         rec_process->mem_start = addr;
         if (memlog) {
@@ -403,7 +398,6 @@ PCB* Receive_process() {
     return rec_process;
 }
 
-/* ----------------------- Metrics -------------------------------------- */
 float Round(float var) {
     return ((int)(var * 100 + 0.5)) / 100.0;
 }
@@ -416,7 +410,7 @@ void ComputePerformanceMetrics() {
     }
 
     int total_time = getClk() - first_arr_proc;
-    if (total_time <= 0) total_time = 1; /* avoid div-by-zero in weird cases */
+    if (total_time <= 0) total_time = 1; 
 
     float cpu_utilization = ((float)total_runtime / (float)total_time) * 100.0f;
     cpu_utilization = Round(cpu_utilization);
@@ -443,7 +437,7 @@ void ComputePerformanceMetrics() {
     fclose(perf_file);
 }
 
-/* ----------------------- main (yours + additions) --------------------- */
+
 int main(int argc, char* argv[]) {
     if (argc < 3) {
         printf("Too few arguments to scheduler\n");
@@ -452,13 +446,13 @@ int main(int argc, char* argv[]) {
 
     Ready_Queue = createQueue(100);
 
-    /* Initialize clock */
+    
     initClk();
 
     g_algorithm = atoi(argv[1]);
     process_count = atoi(argv[2]);
 
-    /* Allocate memory for WTA_values */
+    
     WTA_values = (float*)malloc(sizeof(float) * process_count);
     if (WTA_values == NULL) {
         perror("Error allocating memory for WTA_values");
@@ -468,10 +462,10 @@ int main(int argc, char* argv[]) {
     int quantum = 0;
     if (g_algorithm == 3) quantum = atoi(argv[3]);
 
-    /* IPC */
+    
     CreateMessageQueue();
 
-    /* Open logs */
+    
     logfile = fopen("scheduler.log", "w");
     if (!logfile) {
         perror("Error opening log file");
@@ -479,7 +473,7 @@ int main(int argc, char* argv[]) {
     }
     fprintf(logfile, "#At time x process y state arr w total z remain y wait k\n");
 
-    /* Memory log: open always, but we will only write if memsize>0 */
+    
     memlog = fopen("memory.log", "w");
     if (!memlog) {
         perror("Error opening memory log file");
@@ -507,7 +501,7 @@ int main(int argc, char* argv[]) {
             exit(-1);
     }
 
-    /* Metrics & cleanup */
+    
     ComputePerformanceMetrics();
     fclose(logfile);
     fclose(memlog);
@@ -521,20 +515,20 @@ int main(int argc, char* argv[]) {
 /* ----------------------- Schedulers (yours) --------------------------- */
 void HPF() {
     while (finished_processes < process_count) {
-        /* Admit any arrivals */
+        
         PCB* current_p = Receive_process();
         while (current_p) {
             enqueue(Ready_Queue, current_p); /* enqueue based on priority */
             current_p = Receive_process();
         }
 
-        /* Also try to admit pending requests if memory was freed earlier */
+   
         try_allocate_pending();
 
-        /* Handle terminations */
+        
         Check_Process_Termination();
 
-        /* If no process running, dispatch */
+        
         if (running_process == NULL && !isEmptyQ(Ready_Queue)) {
             running_process = dequeue(Ready_Queue);
             if (running_process->state == READY) {
@@ -562,7 +556,7 @@ void HPF() {
             }
         }
 
-        /* Preemption: higher priority arrives */
+        
         if (running_process != NULL && !isEmptyQ(Ready_Queue)) {
             PCB* highest_priority_process = front(Ready_Queue);
             if (highest_priority_process->priority < running_process->priority) {
@@ -605,20 +599,20 @@ void HPF() {
 
 void SJF() {
     while (finished_processes < process_count) {
-        /* Arrivals */
+        
         PCB* current_p = Receive_process();
         while (current_p) {
             enqueue_SJF(Ready_Queue, current_p);
             current_p = Receive_process();
         }
 
-        /* Try pending */
+        
         try_allocate_pending();
 
-        /* Terminations */
+        
         Check_Process_Termination();
 
-        /* Update remaining time for currently running */
+        
         if (running_process != NULL) {
             int current_time = getClk();
             int elapsed_time = current_time - running_process->last_run;
@@ -629,7 +623,7 @@ void SJF() {
             }
         }
 
-        /* Preemption if a shorter job has arrived */
+        
         if (running_process != NULL && !isEmptyQ(Ready_Queue)) {
             PCB* shortest_process = front(Ready_Queue);
             int current_time = getClk();
@@ -644,7 +638,7 @@ void SJF() {
             }
         }
 
-        /* Dispatch if idle */
+        
         if (running_process == NULL && !isEmptyQ(Ready_Queue)) {
             int current_time = getClk();
             PCB* next_process = front(Ready_Queue);
@@ -682,22 +676,22 @@ void SJF() {
 
 void RR(int quantum) {
     while (finished_processes < process_count) {
-        /* Arrivals */
+        
         PCB* current_p = Receive_process();
         while (current_p) {
             enqueue_RR(Ready_Queue, current_p); /* FCFS */
             current_p = Receive_process();
         }
 
-        /* Try pending */
+        
         try_allocate_pending();
 
-        /* Terminations */
+      
         Check_Process_Termination();
 
         int current_time = getClk();
 
-        /* Quantum expiration */
+        
         if (running_process != NULL) {
             int elapsed_time = current_time - running_process->last_run;
             if (elapsed_time >= quantum) {
@@ -740,7 +734,7 @@ void RR(int quantum) {
             }
         }
 
-        /* RR ticks in seconds in your setup; keep the sleep(1) */
+   
         sleep(1);
     }
 }
