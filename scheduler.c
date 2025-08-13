@@ -1,4 +1,4 @@
-ن#include "headers.h"
+#include "headers.h"
 #include <signal.h>
 #include <math.h>
 
