@@ -35,7 +35,6 @@ int main(int argc, char *argv[])
         exit(-1);
     }
 
-    // Check if the remaining time is passed as an argument
     if (argc < 2)
     {
         fprintf(stderr, "Usage: %s remaining_time\n", argv[0]);
@@ -45,7 +44,7 @@ int main(int argc, char *argv[])
     int remaining_time = atoi(argv[1]);
     last_time = getClk();
 
-    // printf("Process %d started at time %d with remaining time %d\n", getpid(), last_time, remaining_time);
+    
 
     while (remaining_time > 0)
     {
@@ -54,21 +53,17 @@ int main(int argc, char *argv[])
         {
             remaining_time -= current_time - last_time;
             last_time = current_time;
-            // printf("Process %d at time %d, remaining time %d\n", getpid(), current_time, remaining_time);
         }
     }
 
-    // // Process has finished execution
-    // printf("Process %d has finished execution at time %d.\n", getpid(), getClk());
 
 
 
-
-    // Send message to scheduler to notify termination
+ 
     termination_msgbuff message;
     message.mtype = 5; 
     message.pid = getpid();
-    message.status = 1; // 1 indicates process has finished
+    message.status = 1; 
 
     int send_val = msgsnd(msgq_id, &message, sizeof(message) - sizeof(long), !IPC_NOWAIT);
 
